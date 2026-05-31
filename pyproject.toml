@@ -1,0 +1,55 @@
+[project]
+name = "mall-surveillance"
+version = "0.1.0"
+description = "AI-powered intelligent surveillance system for shopping malls"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    # --- Core Backend ---
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "sqlalchemy>=2.0.36",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.6.0",
+    "python-multipart>=0.0.12",
+    "aiosqlite>=0.20.0",
+
+    # --- AI / ML ---
+    "torch>=2.5.0",
+    "torchvision>=0.20.0",
+    "ultralytics>=8.3.0",
+    "transformers>=4.46.0",
+    "opencv-python-headless>=4.10.0",
+    "faiss-cpu>=1.9.0",
+    "numpy>=1.26.0",
+    "scipy>=1.14.0",
+    "pillow>=11.0.0",
+    "av>=13.0.0",
+
+    # --- LLM ---
+    "ollama>=0.4.0",
+
+    # --- Frontend ---
+    "streamlit>=1.40.0",
+    "plotly>=5.24.0",
+    "streamlit-aggrid>=1.1.0",
+
+    # --- System Monitoring ---
+    "psutil>=6.1.0",
+    "gputil>=1.4.0",
+
+    # --- Utilities ---
+    "httpx>=0.28.0",
+    "python-dateutil>=2.9.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
