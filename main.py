@@ -12,6 +12,7 @@ import signal
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -64,6 +65,13 @@ class AppState:
         self.reasoning_engine: ReasoningEngine | None = None
         self.alert_engine: AlertEngine | None = None
 
+        # Async event handling
+        self.event_executor: ThreadPoolExecutor | None = None
+
+        # LLM cooldown: (camera_id, event_type) -> last trigger time
+        self._llm_cooldown: dict[tuple[str, str], float] = {}
+        self._llm_cooldown_seconds: float = 30.0
+
         # Latest processed data (for dashboard consumption)
         self.latest_frames: dict[str, "object"] = {}
         self.latest_detections: dict[str, list] = {}
@@ -100,7 +108,11 @@ def init_components() -> None:
 
     # 4. Feature Extractor
     logger.info("[4/8] Initializing feature extractor...")
-    app_state.feature_extractor = FeatureExtractor()
+    app_state.feature_extractor = FeatureExtractor(
+        ema_alpha=settings.feature_extractor.ema_alpha,
+        zones=settings.feature_extractor.zones,
+        restricted_zones=settings.feature_extractor.restricted_zones,
+    )
     logger.info("  ✓ Feature extractor ready")
 
     # 5. Video Embedder
@@ -126,6 +138,9 @@ def init_components() -> None:
     app_state.reasoning_engine = ReasoningEngine(settings.llm)
     app_state.alert_engine = AlertEngine()
     logger.info("  ✓ Reasoning & alert engines ready")
+
+    # 9. Event executor (async event handling)
+    app_state.event_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="event-handler")
 
     # Load cameras from database
     _load_cameras_from_db()
@@ -159,6 +174,7 @@ def processing_loop() -> None:
     """Main processing loop — runs in a dedicated thread."""
     logger.info("Processing loop started")
     clip_buffers: dict[str, list] = {}  # camera_id -> list of frames for embedding
+    max_clip_buffer = 64  # Prevent unbounded growth
 
     while app_state.running:
         try:
@@ -167,71 +183,101 @@ def processing_loop() -> None:
                 time.sleep(0.1)
                 continue
 
-            for camera_id, frame in frames.items():
-                if frame is None:
-                    continue
-
-                t_start = time.perf_counter()
-
-                # Store latest frame for dashboard
-                app_state.latest_frames[camera_id] = frame
-
-                # --- Detection ---
-                detections = app_state.detector.detect(frame)
-                app_state.latest_detections[camera_id] = detections
-
-                # --- Tracking ---
-                if camera_id not in app_state.tracker_pool:
-                    app_state.tracker_pool[camera_id] = MultiPersonTracker(
-                        settings.tracker
-                    )
-                tracker = app_state.tracker_pool[camera_id]
-                tracks = tracker.update(detections)
-                app_state.latest_tracks[camera_id] = tracks
-
-                # --- Feature Extraction ---
-                features = app_state.feature_extractor.extract(
-                    tracks, frame.shape[:2]
-                )
-
-                # --- Clip buffering for embeddings ---
-                if camera_id not in clip_buffers:
-                    clip_buffers[camera_id] = []
-                clip_buffers[camera_id].append(frame)
-
-                # When we have enough frames, generate embedding
-                embedding = None
-                if len(clip_buffers[camera_id]) >= settings.embedder.num_frames:
-                    clip = clip_buffers[camera_id][: settings.embedder.num_frames]
-                    clip_buffers[camera_id] = clip_buffers[camera_id][
-                        settings.embedder.num_frames // 2 :
-                    ]  # sliding window overlap
-                    try:
-                        embedding = app_state.embedder.generate_embedding(clip)
-                    except Exception as e:
-                        logger.warning(f"Embedding generation failed: {e}")
-
-                # --- Event Construction ---
-                events = app_state.event_constructor.process_frame_data(
-                    camera_id=camera_id,
-                    tracks=tracks,
-                    features=features,
-                    embedding=embedding,
-                )
-
-                # --- Process each detected event ---
-                for event in events:
-                    _handle_event(event, camera_id)
-
-                # FPS tracking
-                elapsed = time.perf_counter() - t_start
-                app_state.processing_fps[camera_id] = (
-                    1.0 / elapsed if elapsed > 0 else 0.0
-                )
+            # Process cameras in parallel
+            camera_ids = [cid for cid, f in frames.items() if f is not None]
+            if len(camera_ids) > 1:
+                with ThreadPoolExecutor(max_workers=len(camera_ids)) as cam_pool:
+                    futures = {
+                        cam_pool.submit(_process_single_camera, cid, frames[cid], clip_buffers): cid
+                        for cid in camera_ids
+                    }
+                    for future in futures:
+                        try:
+                            future.result(timeout=5.0)
+                        except Exception as e:
+                            logger.error(f"Camera {futures[future]} processing error: {e}")
+            else:
+                for cid in camera_ids:
+                    _process_single_camera(cid, frames[cid], clip_buffers)
 
         except Exception as e:
             logger.error(f"Processing loop error: {e}", exc_info=True)
             time.sleep(0.5)
+
+
+def _process_single_camera(
+    camera_id: str,
+    frame: object,
+    clip_buffers: dict[str, list],
+) -> None:
+    """Process a single camera frame through the full pipeline."""
+    max_clip_buffer = 64
+
+    t_start = time.perf_counter()
+
+    # Store latest frame for dashboard
+    app_state.latest_frames[camera_id] = frame
+
+    # --- Detection ---
+    detections = app_state.detector.detect(frame)
+    app_state.latest_detections[camera_id] = detections
+
+    # --- Tracking ---
+    if camera_id not in app_state.tracker_pool:
+        app_state.tracker_pool[camera_id] = MultiPersonTracker(
+            settings.tracker
+        )
+    tracker = app_state.tracker_pool[camera_id]
+    tracks = tracker.update(detections)
+    app_state.latest_tracks[camera_id] = tracks
+
+    # --- Feature Extraction ---
+    features = app_state.feature_extractor.extract(
+        tracks, frame.shape[:2]
+    )
+
+    # --- Clip buffering for embeddings ---
+    if camera_id not in clip_buffers:
+        clip_buffers[camera_id] = []
+    clip_buffers[camera_id].append(frame)
+
+    # Safety: trim buffer if too large
+    if len(clip_buffers[camera_id]) > max_clip_buffer:
+        clip_buffers[camera_id] = clip_buffers[camera_id][-max_clip_buffer:]
+        logger.warning(f"Clip buffer for camera {camera_id} exceeded {max_clip_buffer}, trimmed")
+
+    # When we have enough frames, generate embedding
+    embedding = None
+    if len(clip_buffers[camera_id]) >= settings.embedder.num_frames:
+        clip = clip_buffers[camera_id][: settings.embedder.num_frames]
+        clip_buffers[camera_id] = clip_buffers[camera_id][
+            settings.embedder.num_frames // 2 :
+        ]  # sliding window overlap
+        try:
+            embedding = app_state.embedder.generate_embedding(clip)
+        except Exception as e:
+            logger.warning(f"Embedding generation failed: {e}")
+
+    # --- Event Construction ---
+    events = app_state.event_constructor.process_frame_data(
+        camera_id=camera_id,
+        tracks=tracks,
+        features=features,
+        embedding=embedding,
+    )
+
+    # --- Submit events to async handler ---
+    for event in events:
+        if app_state.event_executor:
+            app_state.event_executor.submit(_handle_event, event, camera_id)
+        else:
+            _handle_event(event, camera_id)
+
+    # FPS tracking
+    elapsed = time.perf_counter() - t_start
+    app_state.processing_fps[camera_id] = (
+        1.0 / elapsed if elapsed > 0 else 0.0
+    )
 
 
 def _handle_event(event, camera_id: str) -> None:
@@ -267,27 +313,41 @@ def _handle_event(event, camera_id: str) -> None:
                     },
                 )
 
-            # LLM Reasoning (only for high-confidence events)
+            # LLM Reasoning (only for high-confidence events with cooldown)
             reasoning_result = None
             if event.confidence >= settings.event.llm_trigger_threshold:
-                similar = []
-                if event.embedding is not None:
-                    similar = app_state.faiss_store.search_similar_events(
-                        event.embedding, top_k=settings.faiss.top_k
-                    )
+                # Check LLM cooldown
+                cooldown_key = (camera_id, event.event_type.value)
+                last_trigger = app_state._llm_cooldown.get(cooldown_key, 0)
+                now = time.time()
 
-                try:
-                    reasoning_result = app_state.reasoning_engine.analyze_event(
-                        event=event,
-                        similar_events=similar,
-                        camera_meta={"camera_id": camera_id},
+                if now - last_trigger >= app_state._llm_cooldown_seconds:
+                    app_state._llm_cooldown[cooldown_key] = now
+
+                    similar = []
+                    if event.embedding is not None:
+                        similar = app_state.faiss_store.search_similar_events(
+                            event.embedding, top_k=settings.faiss.top_k
+                        )
+
+                    try:
+                        reasoning_result = app_state.reasoning_engine.analyze_event(
+                            event=event,
+                            similar_events=similar,
+                            camera_meta={"camera_id": camera_id},
+                        )
+                    except Exception as e:
+                        logger.warning(f"LLM reasoning failed: {e}")
+                else:
+                    logger.debug(
+                        f"LLM cooldown active for {cooldown_key}, skipping reasoning"
                     )
-                except Exception as e:
-                    logger.warning(f"LLM reasoning failed: {e}")
 
             # Generate alert
             alert = app_state.alert_engine.process_event(event, reasoning_result)
             if alert:
+                # Set the correct DB event ID (integer) instead of UUID
+                alert.event_id = db_event.id
                 alert_repo.create_from_schema(alert)
                 logger.info(
                     f"🚨 ALERT [{alert.priority.value}] {alert.event_type.value} "
@@ -355,6 +415,9 @@ def shutdown(signum=None, frame=None) -> None:
     """Graceful shutdown."""
     logger.info("Shutting down...")
     app_state.running = False
+
+    if app_state.event_executor:
+        app_state.event_executor.shutdown(wait=False)
 
     if app_state.stream_manager:
         app_state.stream_manager.stop_all()

@@ -1,152 +1,259 @@
 <div align="center">
-  <h1>🛡️ Mall Surveillance AI</h1>
-  <p>An intelligent, AI-powered security surveillance system that understands, analyzes, and explains security events in real-time.</p>
+  <h1>Mall Surveillance AI</h1>
+  <p>AI-powered intelligent security surveillance system with real-time event detection, LLM reasoning, and smart alerting.</p>
 </div>
 
 ---
 
-## 🌟 Overview
-This project is not just a traditional violence detection system; it is a **comprehensive Event Understanding platform**. The system leverages Computer Vision, motion analysis, feature extraction, vector embeddings, and Large Language Models (LLMs) to detect complex security events (such as fights, falls, crowd panic, loitering, vandalism, and suspicious behavior), assess their risk, and provide actionable intelligence to security teams.
+## Overview
 
-The architecture is designed as a **Modular Monolith**, optimized for local execution (Local-first) to ensure privacy, and tailored to run efficiently on single-GPU hardware (e.g., RTX 4060 / 4070 / 4080).
+A comprehensive **Event Understanding Platform** that combines Computer Vision, behavioral feature extraction, vector embeddings, and Large Language Models to detect, analyze, and explain security events in real-time.
 
----
-
-## 🏗️ Tech Stack
-* **Environment & Package Management:** `uv` (fast and reliable)
-* **Backend:** Python 3.12, FastAPI, SQLAlchemy, SQLite (easily migratable to PostgreSQL)
-* **Frontend:** Streamlit (Professional multi-page dark theme dashboard)
-* **Computer Vision:** PyTorch, Ultralytics YOLO11, OpenCV
-* **Tracking:** ByteTrack
-* **Video Embeddings:** VideoMAE (via HuggingFace Transformers)
-* **Semantic Search (Vector Store):** FAISS
-* **Reasoning Engine (LLM):** Ollama (for local offline LLMs) or OpenAI API
+**Detected Event Types:**
+- Fight (P1 - Critical)
+- Fall / Medical Emergency (P1 - Critical)
+- Crowd Panic (P2 - High)
+- Vandalism (P2 - High)
+- Loitering (P3 - Medium)
+- Suspicious Behavior (P3 - Medium)
 
 ---
 
-## 🔄 The Pipeline
+## Architecture
 
-1. **Stream Manager:** Ingests video from RTSP streams, local files, or webcams. It uses thread-per-camera architecture to ensure non-blocking stream reading.
-2. **Detection & Tracking:**
-   - **YOLO11** is used for high-accuracy person detection.
-   - **ByteTrack** algorithms track individuals across frames, managing track lifecycles and trajectories.
-3. **Feature Extraction:** Analyzes person speed, direction changes, interpersonal distance, and dwell time to build a comprehensive understanding of the scene and behaviors.
-4. **Video Embeddings:** A **VideoMAE** model converts short video clips into semantic vectors to capture the context of the scene.
-5. **Event Engine:** Applies smart rule-based heuristics to the extracted features to detect 6 types of events:
-   - ⚔️ Fight
-   - 🤕 Fall / Medical Emergency
-   - 🏃 Crowd Panic
-   - 🚶 Loitering
-   - 🕵️ Suspicious Behavior
-   - 💥 Vandalism
-6. **FAISS Vector Store:** Saves event embeddings to allow semantic retrieval of "similar historical events" to aid the system's reasoning.
-7. **LLM Reasoning:** Sends the detected event, motion features, and similar historical events to an LLM (via Ollama). The LLM confirms the event, assesses the risk level, and writes a security report with recommended actions.
-8. **Alert Engine:** Converts confirmed events into prioritized alerts (P1, P2, P3) for the security dashboard.
+```
+Video Stream -> YOLO11 Detection -> ByteTrack Tracking -> Feature Extraction
+                                                             |
+                                                             v
+                    LLM Reasoning <- FAISS Similar Events <- Event Engine
+                         |
+                         v
+                    Alert Engine -> Dashboard (Streamlit) + REST API (FastAPI)
+```
+
+**Design:** Modular Monolith, Local-first, Privacy-preserving, Single-GPU/CPU capable.
 
 ---
 
-## 📂 Project Structure
+## Tech Stack
 
-```text
-yousef/
-├── ai/                     # AI and Computer Vision models
-│   ├── detector.py         # Person detection (YOLO11)
-│   ├── tracker.py          # Person tracking (ByteTrack)
-│   ├── feature_extractor.py# Motion and behavior feature extraction
-│   └── embedder.py         # Video embeddings (VideoMAE)
-├── alerts/                 # Alert management and prioritization
-│   └── engine.py           # Maps events to P1/P2/P3 alerts
-├── backend/                # FastAPI Backend
-│   ├── app.py              # Main application factory
-│   ├── schemas.py          # Pydantic models for API validation
-│   └── routers/            # API endpoints (Cameras, Events, Alerts, etc.)
-├── database/               # Database Layer (SQLAlchemy)
-│   ├── connection.py       # SQLite connection setup
-│   ├── models.py           # ORM Models (Camera, Track, Event, Alert, etc.)
-│   └── repositories/       # Repository Pattern for data access
-├── event_engine/           # Event detection heuristics
-│   ├── constructor.py      # Event construction and deduplication
-│   ├── rules.py            # Event detection rules
-│   └── schemas.py          # Internal Pydantic event schemas
-├── frontend/               # Streamlit Dashboard
-│   ├── app.py              # Dashboard entrypoint and routing
-│   └── pages/              # Dashboard pages (Live, Alerts, Investigation, etc.)
-├── reasoning/              # LLM Reasoning Engine
-│   ├── engine.py           # Context assembly and LLM orchestration
-│   ├── llm_client.py       # Ollama / OpenAI API client
-│   └── prompts.py          # System and analysis prompts
-├── stream/                 # Video Stream Management
-│   └── manager.py          # RTSP/File stream ingestion and health tracking
-├── vector_db/              # Vector Database
-│   └── faiss_store.py      # FAISS index management for semantic search
-├── tests/                  # Pytest test suite
-├── storage/                # Local storage for DB and FAISS indexes
-├── config.py               # Centralized configuration (Pydantic Settings)
-├── main.py                 # Application entrypoint to run the entire system
-├── pyproject.toml          # uv project dependencies
-└── README.md               # Project documentation (this file)
+| Layer | Technology |
+|-------|-----------|
+| Package Manager | `uv` |
+| Backend | Python 3.12, FastAPI, SQLAlchemy, SQLite |
+| Frontend | Streamlit (dark theme multi-page dashboard) |
+| Detection | YOLO11 (Ultralytics) |
+| Tracking | ByteTrack |
+| Feature Extraction | Custom (KDTree, EMA smoothing, zone detection, posture estimation) |
+| Video Embeddings | VideoMAE (HuggingFace Transformers) |
+| Vector Store | FAISS |
+| Reasoning | Ollama (qwen2.5:7b) or OpenAI API |
+| System Monitor | psutil, GPUtil |
+
+---
+
+## Feature Extraction (v2)
+
+The feature extractor computes **30+ features** per tracked person:
+
+### Per-Person Features
+| Category | Features |
+|----------|----------|
+| Motion | speed, acceleration, direction, speed_variance, speed_trend, direction_trend |
+| Path | displacement, path_length, straightness, direction_changes |
+| Dwell | dwell_time (continuous tracking with anchor point) |
+| Fall Detection | vertical_displacement, bbox_aspect_ratio, posture_state (standing/sitting/fallen) |
+| Proximity | nearest_person_distance, people_within_radius, interaction_duration, proximity_score |
+| Zone | current_zone, is_in_restricted_zone |
+
+### Scene-Level Features
+person_count, crowd_density, avg_speed, max_speed, motion_energy, motion_dispersion, interaction_count, fallen_count, restricted_zone_violations
+
+### Performance
+- **O(n log n)** proximity computation via `scipy.spatial.cKDTree`
+- **EMA temporal smoothing** (configurable alpha) for noise reduction
+- **Resolution normalization** (thresholds scaled to 720p base)
+- **Incremental path length** accumulation (O(1) per frame)
+
+---
+
+## Pipeline
+
+1. **Stream Manager** — Thread-per-camera RTSP/file/webcam ingestion
+2. **YOLO11 Detection** — Person detection (nano variant, CUDA/CPU)
+3. **ByteTrack Tracking** — Persistent track IDs with trajectory history
+4. **Feature Extraction** — 30+ motion/behavior/interaction features
+5. **VideoMAE Embedding** — 768-dim semantic video vectors (every N frames)
+6. **Event Engine** — 6 rule-based detectors with confidence scoring
+7. **FAISS Store** — Similar historical event retrieval
+8. **LLM Reasoning** — Event confirmation, risk assessment, security reports
+9. **Alert Engine** — P1/P2/P3 prioritized alerts
+
+### Pipeline Optimizations
+- **Async event handling** — ThreadPoolExecutor(4), non-blocking frame loop
+- **Parallel camera processing** — Multi-camera concurrent processing
+- **LLM cooldown** — 30s per (camera, event_type) to prevent spam
+- **Clip buffer safety** — Max 64 frames with automatic trimming
+
+---
+
+## Project Structure
+
+```
+mall-surveillance-ai/
+├── ai/                         # AI pipeline
+│   ├── detector.py             # YOLO11 person detection
+│   ├── tracker.py              # ByteTrack multi-person tracking
+│   ├── feature_extractor.py    # Motion/behavior/interaction features (KDTree, EMA, zones)
+│   └── embedder.py             # VideoMAE video embeddings
+├── alerts/
+│   └── engine.py               # P1/P2/P3 alert prioritization
+├── backend/
+│   ├── app.py                  # FastAPI application factory
+│   ├── schemas.py              # API request/response models
+│   └── routers/                # API endpoints (cameras, events, alerts, search, analytics, health)
+├── database/
+│   ├── connection.py           # SQLAlchemy engine + session
+│   ├── models.py               # ORM models (Camera, Track, Event, Alert, Embedding, AuditLog)
+│   └── repositories/           # Repository pattern CRUD
+├── event_engine/
+│   ├── constructor.py          # Event construction + deduplication
+│   ├── rules.py                # 6 rule-based event detectors
+│   └── schemas.py              # Pydantic event schemas
+├── frontend/
+│   ├── app.py                  # Streamlit dashboard entrypoint
+│   └── pages/                  # 7 dashboard pages
+├── reasoning/
+│   ├── engine.py               # LLM orchestration
+│   ├── llm_client.py           # Ollama/OpenAI client
+│   └── prompts.py              # System/analysis prompts
+├── stream/
+│   └── manager.py              # Multi-camera stream ingestion
+├── vector_db/
+│   └── faiss_store.py          # FAISS index management
+├── tests/                      # Pytest test suite (52 tests)
+├── config.py                   # Pydantic Settings (env var overrides)
+├── main.py                     # Application entrypoint
+└── pyproject.toml              # Dependencies
 ```
 
 ---
 
-## 🚀 How to Run
+## How to Run
 
-### 1. Prerequisites
+### Prerequisites
 1. **Python 3.12**
-2. **`uv`** package manager. To install: `curl -LsSf https://astral.sh/uv/install.sh | sh`
-3. For local AI reasoning, install **Ollama** and pull a small, fast model (e.g., `ollama run llama3.1` or `ollama run qwen2.5`).
+2. **Ollama** — for local LLM reasoning
 
-### 2. Install Dependencies
-Open your terminal in the project directory and run:
+### 1. Install Ollama and pull the model
 ```bash
+# Install Ollama
+winget install Ollama.Ollama        # Windows
+# or: curl -fsSL https://ollama.com/install.sh | sh  # Linux/Mac
+
+# Pull the recommended model
+ollama pull qwen2.5:7b
+```
+
+### 2. Install dependencies
+```bash
+# Install uv (if not installed)
+pip install uv
+
+# Install project dependencies
 uv sync
 ```
-*`uv` will automatically download and install all required packages (PyTorch, FastAPI, Streamlit, etc.) in a virtual environment.*
 
-### 3. Configuration
-The system uses `config.py` for default settings. You can override any setting using Environment Variables:
-```bash
-export LLM_PROVIDER="ollama"
-export LLM_MODEL="llama3.1"
-# If you prefer to use OpenAI:
-# export LLM_PROVIDER="openai"
-# export OPENAI_API_KEY="sk-..."
-```
-
-### 4. Run the System
-To start the entire system (FastAPI backend, AI pipelines, and the Streamlit dashboard) with a single command:
+### 3. Run the system
 ```bash
 uv run python main.py
 ```
-*Note: YOLO and VideoMAE models will be downloaded automatically upon the first run.*
 
-### 5. Access the System
-Once the system is running, you can access:
-* **Dashboard:** `http://localhost:8501` (Monitor cameras, alerts, and investigate events).
-* **API Documentation (Swagger UI):** `http://localhost:8000/docs`.
+This single command starts:
+- **AI Pipeline** — Detection, tracking, feature extraction, event detection
+- **FastAPI Backend** — `http://localhost:8000`
+- **Streamlit Dashboard** — `http://localhost:8501`
 
----
+*First run will download YOLO11 and VideoMAE models automatically.*
 
-## 🖥️ The Dashboard
-The user interface features several professional pages:
-1. 🎥 **Live Cameras:** Real-time video feeds with detection overlays and FPS tracking.
-2. 🚨 **Active Alerts:** A live feed of security alerts segmented by priority, allowing operators to acknowledge incidents.
-3. 🔍 **Event Investigation:** Deep-dive into specific events, viewing LLM reasoning, involved tracks, and similar historical events.
-4. 🔎 **Event Search:** Search past events using dates, cameras, risk levels, and semantic similarity.
-5. 📊 **Analytics:** Visual charts displaying operational insights, event distribution, and alert trends.
-6. 📹 **Camera Management:** Add, configure, and remove camera streams.
-7. 💻 **System Health:** Monitor server performance metrics (CPU, RAM, GPU VRAM, and processing latencies).
+### 4. Access the system
+| Service | URL |
+|---------|-----|
+| Dashboard | http://localhost:8501 |
+| API Docs (Swagger) | http://localhost:8000/docs |
+| API Health | http://localhost:8000/api/system-health |
 
 ---
 
-## 🧪 Testing
-To run the automated test suite and ensure code integrity:
+## Configuration
+
+All settings are in `config.py` and can be overridden via environment variables:
+
 ```bash
-uv run pytest
+# LLM
+export LLM_PROVIDER="ollama"          # ollama or openai
+export LLM_MODEL="qwen2.5:7b"
+export LLM_BASE_URL="http://localhost:11434"
+
+# Detection
+export DETECTOR_CONFIDENCE_THRESHOLD="0.45"
+export DETECTOR_DEVICE="cuda"          # cuda or cpu
+
+# Feature Extraction
+export FEATURE_EMA_ALPHA="0.3"
+export FEATURE_RESTRICTED_ZONES='["entrance","storage"]'
+
+# Events
+export EVENT_LLM_TRIGGER_THRESHOLD="0.7"
+export EVENT_DEDUP_WINDOW="10.0"
 ```
+
+---
+
+## Dashboard Pages
+
+1. **Live Cameras** — Real-time camera grid with detection overlays and FPS tracking
+2. **Active Alerts** — Live alert feed with P1/P2/P3 priority filtering and acknowledgement
+3. **Event Investigation** — Deep-dive into events with LLM reasoning, similar events, and motion analysis
+4. **Event Search** — Filter-based and semantic search across historical events
+5. **Analytics** — Charts for event distribution, alert trends, and operational insights
+6. **Camera Management** — Add/configure/remove camera streams
+7. **System Health** — CPU, RAM, GPU, FPS monitoring with gauge charts
+
+---
+
+## Testing
+
+```bash
+# Run all tests
+uv run pytest
+
+# Run specific test file
+uv run pytest tests/test_feature_extractor.py -v
+
+# Run with coverage
+uv run pytest --cov=. --cov-report=html
+```
+
+---
+
+## API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/cameras` | List all cameras |
+| POST | `/api/cameras` | Add a camera |
+| GET | `/api/events` | List events (filterable) |
+| GET | `/api/events/{id}` | Event detail |
+| GET | `/api/alerts` | List alerts |
+| POST | `/api/alerts/{id}/acknowledge` | Acknowledge alert |
+| GET | `/api/tracks` | Active tracks |
+| POST | `/api/search` | Semantic event search |
+| GET | `/api/analytics` | Aggregated statistics |
+| GET | `/api/system-health` | CPU/RAM/GPU/FPS |
 
 ---
 
 <div align="center">
-  <p>Built with ❤️ and AI by Ahmed Essam</p>
+  <p>Built with AI by Ahmed Essam</p>
 </div>

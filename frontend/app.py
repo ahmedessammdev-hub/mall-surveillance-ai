@@ -17,7 +17,7 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------------------------
-# Custom CSS for premium dark theme
+# Custom CSS for premium dark theme + hide default Streamlit page nav
 # ---------------------------------------------------------------------------
 st.markdown("""
 <style>
@@ -27,6 +27,18 @@ st.markdown("""
     /* Global styles */
     .stApp {
         font-family: 'Inter', sans-serif;
+    }
+
+    /* Hide Streamlit default multipage navigation */
+    [data-testid="stSidebarNav"] {
+        display: none !important;
+    }
+    [data-testid="stSidebarNavItems"] {
+        display: none !important;
+    }
+    /* Hide the "pages" section in sidebar */
+    section[data-testid="stSidebar"] > div:nth-child(2) > div:nth-child(1) > div:nth-child(2) {
+        display: none !important;
     }
 
     /* Sidebar styling */
@@ -164,6 +176,7 @@ with st.sidebar:
             "🔎 Event Search",
             "📊 Analytics",
             "📹 Camera Management",
+            "📤 Upload Video",
             "💻 System Health",
         ],
         label_visibility="collapsed",
@@ -234,6 +247,10 @@ elif page == "📊 Analytics":
 
 elif page == "📹 Camera Management":
     from frontend.pages.page_camera_management import render
+    render(api_get, api_post)
+
+elif page == "📤 Upload Video":
+    from frontend.pages.page_upload_video import render
     render(api_get, api_post)
 
 elif page == "💻 System Health":

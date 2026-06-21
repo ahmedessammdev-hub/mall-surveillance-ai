@@ -1,7 +1,6 @@
 """Camera Management page — add, edit, remove cameras."""
 
 import streamlit as st
-import httpx
 
 
 def render(api_get, api_post):
@@ -34,27 +33,20 @@ def render(api_get, api_post):
 
             submitted = st.form_submit_button("Add Camera", type="primary")
             if submitted and name:
-                try:
-                    resp = httpx.post(
-                        "http://localhost:8000/api/cameras/",
-                        json={
-                            "name": name,
-                            "rtsp_url": rtsp_url,
-                            "location": location,
-                            "zone": zone,
-                            "fps": fps,
-                            "resolution_w": res_w,
-                            "resolution_h": res_h,
-                        },
-                        timeout=10.0,
-                    )
-                    if resp.status_code == 201:
-                        st.success(f"Camera '{name}' added successfully!")
-                        st.rerun()
-                    else:
-                        st.error(f"Failed to add camera: {resp.text}")
-                except Exception as e:
-                    st.error(f"Error: {e}")
+                result = api_post("/cameras/", json_data={
+                    "name": name,
+                    "rtsp_url": rtsp_url,
+                    "location": location,
+                    "zone": zone,
+                    "fps": fps,
+                    "resolution_w": res_w,
+                    "resolution_h": res_h,
+                })
+                if result:
+                    st.success(f"Camera '{name}' added successfully!")
+                    st.rerun()
+                else:
+                    st.error("Failed to add camera. Check the API connection.")
 
     st.divider()
 
@@ -97,6 +89,7 @@ def render(api_get, api_post):
 
             with col3:
                 if st.button("🗑️ Delete", key=f"del_{cam.get('id')}"):
+                    import httpx
                     try:
                         resp = httpx.delete(
                             f"http://localhost:8000/api/cameras/{cam.get('id')}",

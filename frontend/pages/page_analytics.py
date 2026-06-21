@@ -147,10 +147,75 @@ def render(api_get):
                     "fight": "⚔️", "fall": "🤕", "crowd_panic": "🏃",
                     "loitering": "🚶", "suspicious_behavior": "🕵️", "vandalism": "💥",
                 }.get(e.get("event_type", ""), "⚠️")
+                risk_badge = {
+                    "critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢",
+                }.get(e.get("risk_level", ""), "⚪")
                 st.markdown(
-                    f"{icon} **{e.get('event_type', '?').replace('_', ' ').title()}** — "
+                    f"{icon} **{e.get('event_type', '?').replace('_', ' ').title()}** "
+                    f"{risk_badge} — "
                     f"Cam {e.get('camera_id')}, {e.get('confidence', 0):.0%} conf, "
                     f"{e.get('timestamp', '')[:16]}"
                 )
         else:
             st.caption("No recent events")
+
+    # Charts row 3: Confidence distribution
+    st.divider()
+    col_l3, col_r3 = st.columns(2)
+
+    with col_l3:
+        st.markdown("#### Confidence Distribution")
+        events = api_get("/events/recent", params={"limit": 100}) or []
+        if events:
+            confidences = [e.get("confidence", 0) for e in events if e.get("confidence")]
+            if confidences:
+                fig = go.Figure(data=[go.Histogram(
+                    x=confidences,
+                    nbinsx=20,
+                    marker_color="#8b5cf6",
+                    opacity=0.8,
+                )])
+                fig.update_layout(
+                    template="plotly_dark",
+                    height=300,
+                    xaxis_title="Confidence Score",
+                    yaxis_title="Count",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    margin=dict(l=40, r=20, t=20, b=40),
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.caption("No confidence data available")
+        else:
+            st.caption("No events to analyze")
+
+    with col_r3:
+        st.markdown("#### Events Over Time")
+        events = api_get("/events/recent", params={"limit": 50}) or []
+        if events:
+            # Group by hour
+            from collections import Counter
+            hours = [e.get("timestamp", "")[:13] for e in events if e.get("timestamp")]
+            hour_counts = Counter(hours)
+            if hour_counts:
+                sorted_hours = sorted(hour_counts.keys())
+                fig = go.Figure(data=[go.Scatter(
+                    x=sorted_hours,
+                    y=[hour_counts[h] for h in sorted_hours],
+                    mode="lines+markers",
+                    line=dict(color="#8b5cf6", width=2),
+                    marker=dict(size=6),
+                )])
+                fig.update_layout(
+                    template="plotly_dark",
+                    height=300,
+                    xaxis_title="Time (Hour)",
+                    yaxis_title="Events",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    margin=dict(l=40, r=20, t=20, b=40),
+                )
+                st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.caption("No events to analyze")

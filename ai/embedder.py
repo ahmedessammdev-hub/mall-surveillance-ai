@@ -71,8 +71,8 @@ class VideoEmbedder:
         # Sample frames to target count
         sampled = self._sample_frames(frames, self.config.num_frames)
 
-        # Convert BGR to RGB and to list of numpy arrays
-        rgb_frames = [f[:, :, ::-1] for f in sampled]  # BGR → RGB
+        # Convert BGR to RGB and ensure contiguous memory layout
+        rgb_frames = [np.ascontiguousarray(f[:, :, ::-1]) for f in sampled]  # BGR → RGB, copy
 
         # Process through VideoMAE processor
         inputs = self._processor(rgb_frames, return_tensors="pt")

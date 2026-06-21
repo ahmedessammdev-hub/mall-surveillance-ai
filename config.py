@@ -129,6 +129,17 @@ class StreamSettings(BaseSettings):
     model_config = {"env_prefix": "STREAM_"}
 
 
+class FeatureExtractorSettings(BaseSettings):
+    """Feature extractor configuration."""
+    ema_alpha: float = Field(default=0.3, ge=0.0, le=1.0, description="EMA smoothing factor")
+    interaction_radius: float = Field(default=120.0, description="Interaction radius at 720p (px)")
+    dwell_radius: float = Field(default=50.0, description="Dwell detection radius at 720p (px)")
+    zones: list[dict] = Field(default_factory=list, description="Zone definitions: [{name, polygon}]")
+    restricted_zones: list[str] = Field(default_factory=list, description="Names of restricted zones")
+
+    model_config = {"env_prefix": "FEATURE_"}
+
+
 class EventSettings(BaseSettings):
     """Event detection thresholds."""
     # Fight detection
@@ -158,7 +169,7 @@ class EventSettings(BaseSettings):
 
     # General
     event_confidence_threshold: float = Field(default=0.6, description="Min confidence for event")
-    llm_trigger_threshold: float = Field(default=0.7, description="Min confidence to trigger LLM")
+    llm_trigger_threshold: float = Field(default=0.5, description="Min confidence to trigger LLM")
     event_dedup_window: float = Field(default=10.0, description="Seconds to dedup same event type")
 
     model_config = {"env_prefix": "EVENT_"}
@@ -183,7 +194,7 @@ class FAISSSettings(BaseSettings):
 class LLMSettings(BaseSettings):
     """LLM reasoning engine configuration."""
     provider: LLMProvider = Field(default=LLMProvider.OLLAMA)
-    model: str = Field(default="llama3.1:8b")
+    model: str = Field(default="qwen2.5:7b")
     base_url: str = Field(default="http://localhost:11434")
     api_key: str = Field(default="", description="For OpenAI-compatible APIs")
     temperature: float = Field(default=0.3, ge=0.0, le=2.0)
@@ -224,6 +235,7 @@ class Settings(BaseSettings):
     detector: DetectorSettings = Field(default_factory=DetectorSettings)
     tracker: TrackerSettings = Field(default_factory=TrackerSettings)
     embedder: EmbedderSettings = Field(default_factory=EmbedderSettings)
+    feature_extractor: FeatureExtractorSettings = Field(default_factory=FeatureExtractorSettings)
     stream: StreamSettings = Field(default_factory=StreamSettings)
     event: EventSettings = Field(default_factory=EventSettings)
     faiss: FAISSSettings = Field(default_factory=FAISSSettings)

@@ -102,13 +102,15 @@ class EventRules:
                 if pair not in fight_pairs and rev_pair not in fight_pairs:
                     fight_pairs.append(pair)
 
-                    # Compute fight score
+                    # Compute fight score with trend awareness
                     speed_score = min(pf.speed / self.cfg.fight_speed_threshold, 1.0)
                     prox_score = 1.0 - (pf.nearest_person_distance / self.cfg.fight_proximity_threshold)
                     interaction_score = min(pf.interaction_duration / (self.cfg.fight_interaction_duration * 3), 1.0)
                     accel_score = min(abs(pf.acceleration) / 200.0, 1.0)
+                    # Boost if speed is increasing (aggressive trend)
+                    trend_boost = 0.1 if pf.speed_trend > 50 else 0.0
 
-                    score = (speed_score * 0.3 + prox_score * 0.3 + interaction_score * 0.25 + accel_score * 0.15)
+                    score = (speed_score * 0.3 + prox_score * 0.3 + interaction_score * 0.25 + accel_score * 0.15 + trend_boost)
                     fight_scores.append(score)
 
         if not fight_pairs:
@@ -134,9 +136,15 @@ class EventRules:
                     bbox=list(t.bbox),
                     speed=pf.speed if pf else 0.0,
                     role="participant",
+                    posture_state=pf.posture_state if pf else "unknown",
+                    zone=pf.current_zone if pf else "",
                 ))
 
         risk = self._score_to_risk(max_score)
+
+        # Determine dominant zone
+        zones = [pf.current_zone for pf in persons.values() if pf.current_zone]
+        event_zone = max(set(zones), key=zones.count) if zones else ""
 
         return FightEvent(
             camera_id=camera_id,
@@ -151,6 +159,8 @@ class EventRules:
                 default=0.0,
             ),
             involved_count=len(involved_ids),
+            posture_state="fighting",
+            zone=event_zone,
             behavior_scores={"fight_score": max_score},
             motion_features=scene.to_dict(),
         )
@@ -164,44 +174,56 @@ class EventRules:
         tracks: list[TrackedPerson],
         persons: dict[int, PersonFeatures],
     ) -> Optional[FallEvent]:
-        """Detect falls based on sudden vertical displacement and speed drop."""
+        """Detect falls based on vertical displacement, speed drop, and posture."""
         for tid, pf in persons.items():
-            if (
-                pf.vertical_displacement > self.cfg.fall_vertical_displacement
-                and pf.speed < pf.speed_variance * self.cfg.fall_speed_drop_ratio + 5.0
-            ):
-                # Large downward motion + low current speed = potential fall
-                confidence = min(
-                    (pf.vertical_displacement / (self.cfg.fall_vertical_displacement * 2))
-                    * 0.6
-                    + (1.0 - min(pf.speed / 50.0, 1.0)) * 0.4,
-                    1.0,
-                )
+            vertical_ok = pf.vertical_displacement > self.cfg.fall_vertical_displacement
+            speed_drop_ok = pf.speed < pf.speed_variance * self.cfg.fall_speed_drop_ratio + 5.0
+            posture_ok = pf.posture_state == "fallen"
 
-                if confidence < self.cfg.event_confidence_threshold:
-                    continue
+            # Trigger on vertical displacement + speed drop, OR posture-based detection
+            if not (vertical_ok and speed_drop_ok) and not posture_ok:
+                continue
 
-                t = next((t for t in tracks if t.track_id == tid), None)
-                involved = []
-                if t:
-                    involved.append(InvolvedTrack(
-                        track_id=tid,
-                        bbox=list(t.bbox),
-                        speed=pf.speed,
-                        role="victim",
-                    ))
+            # Compute confidence with posture boost
+            base_confidence = min(
+                (pf.vertical_displacement / (self.cfg.fall_vertical_displacement * 2))
+                * 0.5
+                + (1.0 - min(pf.speed / 50.0, 1.0)) * 0.3,
+                1.0,
+            )
 
-                return FallEvent(
-                    camera_id=camera_id,
-                    person_count=1,
-                    confidence=round(confidence, 3),
-                    risk_level=self._score_to_risk(confidence),
-                    involved_tracks=involved,
-                    vertical_drop=pf.vertical_displacement,
-                    recovery_detected=False,
-                    behavior_scores={"fall_score": confidence},
-                    motion_features=pf.to_dict(),
-                )
+            # Boost confidence if posture confirms fall
+            posture_boost = 0.2 if posture_ok else 0.0
+            confidence = min(base_confidence + posture_boost, 1.0)
+
+            if confidence < self.cfg.event_confidence_threshold:
+                continue
+
+            t = next((t for t in tracks if t.track_id == tid), None)
+            involved = []
+            if t:
+                involved.append(InvolvedTrack(
+                    track_id=tid,
+                    bbox=list(t.bbox),
+                    speed=pf.speed,
+                    role="victim",
+                    posture_state=pf.posture_state,
+                    zone=pf.current_zone,
+                ))
+
+            return FallEvent(
+                camera_id=camera_id,
+                person_count=1,
+                confidence=round(confidence, 3),
+                risk_level=self._score_to_risk(confidence),
+                involved_tracks=involved,
+                vertical_drop=pf.vertical_displacement,
+                recovery_detected=False,
+                posture_state=pf.posture_state,
+                zone=pf.current_zone,
+                behavior_scores={"fall_score": confidence},
+                motion_features=pf.to_dict(),
+            )
 
         return None
 
@@ -240,6 +262,8 @@ class EventRules:
                 bbox=list(t.bbox),
                 speed=persons.get(t.track_id, PersonFeatures(track_id=0)).speed,
                 role="affected",
+                posture_state=persons.get(t.track_id, PersonFeatures(track_id=0)).posture_state,
+                zone=persons.get(t.track_id, PersonFeatures(track_id=0)).current_zone,
             )
             for t in tracks
         ]
@@ -299,6 +323,8 @@ class EventRules:
                     risk_level=RiskLevel.LOW if confidence < 0.7 else RiskLevel.MEDIUM,
                     involved_tracks=involved,
                     dwell_duration=pf.dwell_time,
+                    zone=pf.current_zone,
+                    posture_state=pf.posture_state,
                     behavior_scores={"loitering_score": confidence},
                     motion_features=pf.to_dict(),
                 ))
@@ -314,19 +340,24 @@ class EventRules:
         tracks: list[TrackedPerson],
         persons: dict[int, PersonFeatures],
     ) -> list[SuspiciousBehaviorEvent]:
-        """Detect suspicious behavior: erratic movement, direction changes."""
+        """Detect suspicious behavior: erratic movement, direction changes, zone violations."""
         events: list[SuspiciousBehaviorEvent] = []
 
         for tid, pf in persons.items():
             dir_changes_ok = pf.direction_changes > self.cfg.suspicious_direction_changes
             erratic_ok = pf.straightness < 0.3 and pf.path_length > 100
             speed_var_ok = pf.speed_variance > 1000
+            zone_violation_ok = pf.is_in_restricted_zone
 
-            indicators = sum([dir_changes_ok, erratic_ok, speed_var_ok])
+            indicators = sum([dir_changes_ok, erratic_ok, speed_var_ok, zone_violation_ok])
             if indicators < 2:
                 continue
 
-            confidence = min(indicators / 3.0, 1.0) * 0.8
+            confidence = min(indicators / 4.0, 1.0) * 0.8
+            # Boost for restricted zone violations
+            if zone_violation_ok:
+                confidence = min(confidence + 0.15, 1.0)
+
             if confidence < self.cfg.event_confidence_threshold:
                 continue
 
@@ -338,6 +369,8 @@ class EventRules:
                     bbox=list(t.bbox),
                     speed=pf.speed,
                     role="subject",
+                    posture_state=pf.posture_state,
+                    zone=pf.current_zone,
                 ))
 
             events.append(SuspiciousBehaviorEvent(
@@ -347,7 +380,10 @@ class EventRules:
                 risk_level=RiskLevel.MEDIUM,
                 involved_tracks=involved,
                 direction_change_count=pf.direction_changes,
+                zone_violation_count=1 if zone_violation_ok else 0,
                 pattern_anomaly_score=1.0 - pf.straightness,
+                posture_state=pf.posture_state,
+                zone=pf.current_zone,
                 behavior_scores={"suspicious_score": confidence},
                 motion_features=pf.to_dict(),
             ))
@@ -384,6 +420,8 @@ class EventRules:
                         bbox=list(t.bbox),
                         speed=pf.speed,
                         role="perpetrator",
+                        posture_state=pf.posture_state,
+                        zone=pf.current_zone,
                     ))
 
                 return VandalismEvent(
@@ -393,6 +431,9 @@ class EventRules:
                     risk_level=self._score_to_risk(confidence),
                     involved_tracks=involved,
                     impact_force_estimate=abs(pf.acceleration),
+                    target_area=pf.current_zone,
+                    posture_state=pf.posture_state,
+                    zone=pf.current_zone,
                     behavior_scores={"vandalism_score": confidence},
                     motion_features=pf.to_dict(),
                 )

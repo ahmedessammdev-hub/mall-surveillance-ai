@@ -79,7 +79,7 @@ def render(api_get, api_post):
     st.divider()
 
     if not alerts:
-        st.success("✅ No active alerts. All clear!")
+        st.success("No active alerts. All clear!")
         return
 
     # Alert feed
@@ -88,11 +88,18 @@ def render(api_get, api_post):
         badge_class = f"alert-{priority.lower()}"
         risk = alert.get("risk_level", "low")
         risk_class = f"risk-{risk}"
-        ack_status = "✅ Acknowledged" if alert.get("acknowledged") else "⏳ Pending"
+        ack_status = "Acknowledged" if alert.get("acknowledged") else "Pending"
+        event_type = alert.get("event_type", "Unknown").replace("_", " ").title()
+
+        event_icons = {
+            "Fight": "⚔️", "Fall": "🤕", "Crowd Panic": "🏃",
+            "Loitering": "🚶", "Suspicious Behavior": "🕵️", "Vandalism": "💥",
+        }
+        icon = event_icons.get(event_type, "⚠️")
 
         with st.expander(
             f"{'🔴' if priority == 'P1' else '🟠' if priority == 'P2' else '🔵'} "
-            f"[{priority}] {alert.get('event_type', 'Unknown').replace('_', ' ').title()} — "
+            f"[{priority}] {icon} {event_type} — "
             f"{alert.get('timestamp', '')[:19]}",
             expanded=(priority == "P1" and not alert.get("acknowledged")),
         ):
@@ -103,11 +110,17 @@ def render(api_get, api_post):
                 **Reasoning:** {alert.get('reasoning', 'N/A')}
 
                 **Recommended Action:** {alert.get('recommended_action', 'N/A')}
-
-                **Confidence:** {alert.get('confidence', 0):.1%} &nbsp;|&nbsp;
-                **Risk:** <span class="{risk_class}">{risk.upper()}</span> &nbsp;|&nbsp;
-                **Status:** {ack_status}
                 """, unsafe_allow_html=True)
+
+                # Show key metrics in a row
+                m1, m2, m3 = st.columns(3)
+                with m1:
+                    st.metric("Confidence", f"{alert.get('confidence', 0):.1%}")
+                with m2:
+                    risk_colors = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}
+                    st.metric("Risk", f"{risk_colors.get(risk, '⚪')} {risk.upper()}")
+                with m3:
+                    st.metric("Status", ack_status)
 
             with col_b:
                 if not alert.get("acknowledged"):
@@ -120,8 +133,8 @@ def render(api_get, api_post):
                             st.success("Alert acknowledged!")
                             st.rerun()
                 else:
-                    st.caption(f"Ack by: {alert.get('acknowledged_by', 'N/A')}")
-                    st.caption(f"At: {alert.get('acknowledged_at', 'N/A')}")
+                    st.caption(f"By: {alert.get('acknowledged_by', 'N/A')}")
+                    st.caption(f"At: {alert.get('acknowledged_at', 'N/A')[:19] if alert.get('acknowledged_at') else 'N/A'}")
 
     # Auto-refresh
     st.divider()

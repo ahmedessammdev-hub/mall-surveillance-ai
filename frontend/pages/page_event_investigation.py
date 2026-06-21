@@ -73,7 +73,7 @@ def render(api_get):
 
     st.divider()
 
-    # Two-column layout: Details + Reasoning
+    # Tabs
     tab1, tab2, tab3, tab4 = st.tabs(["📋 Details", "🧠 Reasoning", "🔗 Similar Events", "📊 Motion Features"])
 
     with tab1:
@@ -95,10 +95,16 @@ def render(api_get):
             tracks = json.loads(event.get("involved_tracks_json", "[]"))
             if tracks:
                 for t in tracks:
+                    posture = t.get("posture_state", "unknown")
+                    zone = t.get("zone", "")
+                    posture_icon = {"standing": "🧍", "sitting": "🪑", "fallen": "🧎", "fighting": "🤼"}.get(posture, "❓")
+
                     st.markdown(
                         f"- **Track {t.get('track_id', '?')}**: "
                         f"speed={t.get('speed', 0):.1f} px/s, "
-                        f"role={t.get('role', 'N/A')}"
+                        f"role={t.get('role', 'N/A')}, "
+                        f"posture={posture_icon} {posture}, "
+                        f"zone={zone or 'N/A'}"
                     )
             else:
                 st.caption("No specific tracks recorded")
@@ -112,7 +118,7 @@ def render(api_get):
             if reasoning:
                 st.info(reasoning.get("reasoning", "No reasoning available"))
                 st.markdown(f"**Recommended Action:** {reasoning.get('recommended_action', 'N/A')}")
-                st.markdown(f"**Requires Intervention:** {'Yes ⚠️' if reasoning.get('requires_intervention') else 'No'}")
+                st.markdown(f"**Requires Intervention:** {'Yes' if reasoning.get('requires_intervention') else 'No'}")
             else:
                 st.caption("No LLM reasoning available for this event. "
                           "Reasoning is generated only for events above the confidence threshold.")
@@ -143,26 +149,45 @@ def render(api_get):
 
             if motion:
                 st.markdown("**Motion Features:**")
-                st.json(motion)
+
+                # Show key features in a nice grid
+                key_features = {
+                    "Speed": motion.get("avg_speed", motion.get("speed", "N/A")),
+                    "Acceleration": motion.get("avg_acceleration", motion.get("acceleration", "N/A")),
+                    "Motion Dispersion": motion.get("motion_dispersion", "N/A"),
+                    "Fallen Count": motion.get("fallen_count", "N/A"),
+                    "Zone Violations": motion.get("restricted_zone_violations", "N/A"),
+                    "Interaction Count": motion.get("interaction_count", "N/A"),
+                }
+
+                feat_cols = st.columns(3)
+                for i, (key, val) in enumerate(key_features.items()):
+                    with feat_cols[i % 3]:
+                        if isinstance(val, float):
+                            st.metric(key, f"{val:.2f}")
+                        elif val != "N/A":
+                            st.metric(key, str(val))
+
+                with st.expander("Full Motion Data"):
+                    st.json(motion)
+
             if behavior:
                 st.markdown("**Behavior Scores:**")
-                # Visualize as bar chart
-                if behavior:
-                    fig = go.Figure(data=[
-                        go.Bar(
-                            x=list(behavior.keys()),
-                            y=list(behavior.values()),
-                            marker_color="#8b5cf6",
-                        )
-                    ])
-                    fig.update_layout(
-                        template="plotly_dark",
-                        height=300,
-                        margin=dict(l=20, r=20, t=20, b=40),
-                        paper_bgcolor="rgba(0,0,0,0)",
-                        plot_bgcolor="rgba(0,0,0,0)",
+                fig = go.Figure(data=[
+                    go.Bar(
+                        x=list(behavior.keys()),
+                        y=list(behavior.values()),
+                        marker_color="#8b5cf6",
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                ])
+                fig.update_layout(
+                    template="plotly_dark",
+                    height=300,
+                    margin=dict(l=20, r=20, t=20, b=40),
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                )
+                st.plotly_chart(fig, use_container_width=True)
         except json.JSONDecodeError:
             st.caption("Feature data unavailable")
 

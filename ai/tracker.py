@@ -84,6 +84,7 @@ class MultiPersonTracker:
         self._active_track_ids: set[int] = set()
         self._lost_track_ids: set[int] = set()
         self._max_traj_len = config.max_trajectory_length
+        self._next_id_counter = 0
 
     def update(self, detections: list[Detection]) -> list[TrackedPerson]:
         """Update tracker with new detections and return tracked persons.
@@ -293,11 +294,9 @@ class MultiPersonTracker:
     # Internal helpers
     # -----------------------------------------------------------------------
 
-    _next_id_counter = 0
-
     def _next_track_id(self) -> int:
-        MultiPersonTracker._next_id_counter += 1
-        return MultiPersonTracker._next_id_counter
+        self._next_id_counter += 1
+        return self._next_id_counter
 
     @staticmethod
     def _compute_iou(

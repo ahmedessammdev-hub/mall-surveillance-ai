@@ -114,7 +114,7 @@ class Event(Base):
     # Relationships
     camera = relationship("Camera", back_populates="events")
     alerts = relationship("Alert", back_populates="event", cascade="all, delete-orphan")
-    embedding = relationship("Embedding", back_populates="event", uselist=False)
+    embedding = relationship("Embedding", uselist=False, foreign_keys=[embedding_id])
 
     def __repr__(self) -> str:
         return (
@@ -169,7 +169,7 @@ class Embedding(Base):
     created_at = Column(DateTime, default=func.now(), nullable=False)
 
     # Relationships
-    event = relationship("Event", back_populates="embedding", foreign_keys=[event_id])
+    event = relationship("Event", foreign_keys=[event_id], viewonly=True)
 
     def __repr__(self) -> str:
         return f"<Embedding(id={self.id}, dim={self.dimension}, model='{self.model_name}')>"

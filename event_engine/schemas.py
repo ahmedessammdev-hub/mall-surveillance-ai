@@ -36,6 +36,8 @@ class InvolvedTrack(BaseModel):
     bbox: list[float] = Field(default_factory=list)
     speed: float = 0.0
     role: str = ""  # e.g., "aggressor", "victim", "bystander"
+    posture_state: str = "unknown"  # standing, sitting, fallen, unknown
+    zone: str = ""
 
     class Config:
         from_attributes = True
@@ -59,7 +61,7 @@ class SecurityEvent(BaseModel):
     # Behavior & interaction scores
     behavior_scores: dict[str, float] = Field(default_factory=dict)
     interaction_scores: dict[str, float] = Field(default_factory=dict)
-    motion_features: dict[str, float] = Field(default_factory=dict)
+    motion_features: dict[str, Any] = Field(default_factory=dict)
 
     # Embedding & retrieval
     embedding_id: Optional[str] = None
@@ -69,6 +71,10 @@ class SecurityEvent(BaseModel):
     # Scoring
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     risk_level: RiskLevel = RiskLevel.LOW
+
+    # Posture & zone context
+    posture_state: str = ""  # dominant posture of involved persons
+    zone: str = ""  # zone where event occurred
 
     class Config:
         from_attributes = True
